@@ -41,3 +41,6 @@ The following problems remain unsolved:
 
 ## Worth mentioning
 If you feel the speed is a little bit slow it is possible to increase the payload, but this is not recommended. Anyways, the file you should be looking for to modify is UdpSocket.java. Inside the file, you may modify `PAYLOAD_LENGTH` to `PAYLOAD_LENGTH = 3072`, 3072 is tested and it should work fine.
+
+### Contribution
+Feel free to improve the library, I am stuck on how to improve its performance. 

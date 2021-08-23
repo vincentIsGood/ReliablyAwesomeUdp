@@ -3,6 +3,7 @@ package com.vincentcodes.io;
 import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.SocketException;
@@ -180,13 +181,29 @@ public abstract class UdpSocket implements Closeable{
         frame = new Frame(2, seqNum++, payload);
         // sendFrame(frame);
         sentPackets.add(frame);
+
+        
+        // Start the timer beforehand. Wait at most 1s for the report frame 
+        Container<Frame> lastFrame = new Container<>();
+        lastFrame.value = sentPackets.get(sentPackets.size()-1);
+        CountdownTimer readTimeoutTimer = new CountdownTimer(1000);
+        readTimeoutTimer.setExitHandler(() ->{
+            try{
+                // Maybe the client didn't receive the last frame
+                sendFrame(lastFrame.value);
+            }catch(IOException e){
+                throw new UncheckedIOException(e);
+            }
+        });
         
         for(Frame f : sentPackets)
             sendFrame(f);
         
         Frame reportFrame = null;
-        boolean lastFrame = false;
+        boolean isLastFrame = false;
+        readTimeoutTimer.start();
         while(true){
+            readTimeoutTimer.reset();
             firstPacket = true;
             //Wait for the report frame
             // debug("Waiting for report frame");
@@ -198,16 +215,17 @@ public abstract class UdpSocket implements Closeable{
                 }
                 // Catch the latest packet
                 if(inputDataFrames.peekLast() != null && inputDataFrames.peekLast().type == 3){
-                    lastFrame =  true;
+                    isLastFrame =  true;
                     break;
                 }
                 // just in case recv() took all the packets and the report frame becomes the first
                 if(inputDataFrames.peekFirst() != null && inputDataFrames.peekFirst().type == 3){
-                    lastFrame = false;
+                    isLastFrame = false;
                     break;
                 }
             }
-            if(lastFrame){
+            readTimeoutTimer.stopTimer();
+            if(isLastFrame){
                 reportFrame = inputDataFrames.pollLast();
             }else{
                 reportFrame = inputDataFrames.pollFirst();
@@ -226,7 +244,7 @@ public abstract class UdpSocket implements Closeable{
                 int index = Integer.parseInt(response);
                 frame = sentPackets.get(index);
                 frame.type = 2;
-                sentPackets.get(index);
+                lastFrame.value = frame;
                 sendFrame(sentPackets.get(index));
             }else{
                 int index = Integer.parseInt(missingPacketsSeq[0]);
@@ -242,9 +260,11 @@ public abstract class UdpSocket implements Closeable{
                 index = Integer.parseInt(missingPacketsSeq[missingPacketsSeq.length-1]);
                 frame = sentPackets.get(index);
                 frame.type = 2;
+                lastFrame.value = frame;
                 sendFrame(sentPackets.get(index));
             }
         }
+        readTimeoutTimer.killTimer();
         sentPackets.clear();
     }
 
@@ -259,6 +279,12 @@ public abstract class UdpSocket implements Closeable{
             return recvRaw();
         }
         
+        BooleanContainer readTimeout = new BooleanContainer();
+        CountdownTimer receiveTimeoutTimer = new CountdownTimer(1000);
+        receiveTimeoutTimer.setExitHandler(() ->{
+            readTimeout.value = true;
+        });
+        receiveTimeoutTimer.start();
         List<Frame> receivedPackets = new ArrayList<>();
         // Take frames until the "End of data" packet
         while(true){
@@ -267,6 +293,8 @@ public abstract class UdpSocket implements Closeable{
                 try{
                     Thread.sleep(1);
                 }catch(InterruptedException e){close();return null;}
+                if(readTimeout.value)
+                    throw new IOException("Read timeout, exiting recv()");
                 if(inputDataFrames.peekLast() != null && inputDataFrames.peekLast().type == 2){
                     break;
                 }
@@ -276,6 +304,7 @@ public abstract class UdpSocket implements Closeable{
                 Frame frame = inputDataFrames.pollFirst();
                 fillArrayToSize(receivedPackets, frame.seq+1);
                 receivedPackets.set(frame.seq, frame);
+                receiveTimeoutTimer.resetTimeLapsed();
                 if(frame.type == 2) break;
             }
             String missingPackets = findNullEleIndexes(receivedPackets, 10000);
@@ -286,6 +315,7 @@ public abstract class UdpSocket implements Closeable{
             // debug("Request missing packets: " + missingPackets);
             sendFrame(new Frame(3, receivedPackets.size(), missingPackets.getBytes()));
         }
+        receiveTimeoutTimer.killTimer();
 
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         for(Frame frame : receivedPackets){

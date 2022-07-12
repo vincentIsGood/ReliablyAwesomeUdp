@@ -3,6 +3,9 @@ The ReliablyAwesomeUdp is a java library created to create a reliable udp commun
 
 I have made the library as close to `Socket` and `ServerSocket` as close as possible except that Udp do not use `InputStream` and `OutputStream`. So, I did not use those to implement this library.
 
+## Caution (Update)
+This project is not widely tested and will not be maintained, this is kind of a poc project. Never use it on production.
+
 ## Basic API
 Most of the api revolves around `UdpSocket`. To create a client...
 ```java
